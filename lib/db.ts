@@ -8,8 +8,13 @@ const DB_PATH = join(process.cwd(), 'data', 'agent.db');
 export async function getDb(): Promise<Database> {
   if (db) return db;
 
-  const SQL = await initSqlJs();
-  
+  // For Next.js server-side, we need to use the node_modules path
+  const wasmPath = join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+  const wasmBinary = readFileSync(wasmPath);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const SQL = await initSqlJs({ wasmBinary } as any);
+
   // Ensure data directory exists
   const dataDir = join(process.cwd(), 'data');
   if (!existsSync(dataDir)) {
