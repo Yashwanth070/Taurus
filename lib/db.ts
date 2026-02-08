@@ -3,28 +3,47 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
 let db: Database | null = null;
-const DB_PATH = join(process.cwd(), 'data', 'agent.db');
+
+// Use /tmp on Vercel (serverless), local data dir otherwise
+const isVercel = process.env.VERCEL === '1';
+const DATA_DIR = isVercel ? '/tmp' : join(process.cwd(), 'data');
+const DB_PATH = join(DATA_DIR, 'agent.db');
 
 export async function getDb(): Promise<Database> {
   if (db) return db;
 
-  // For Next.js server-side, we need to use the node_modules path
-  const wasmPath = join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
-  const wasmBinary = readFileSync(wasmPath);
+  let wasmBinary: Buffer | undefined;
+
+  // Try to load WASM from node_modules (works locally and on Vercel)
+  try {
+    const wasmPath = join(process.cwd(), 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+    wasmBinary = readFileSync(wasmPath);
+  } catch {
+    // Fallback to public directory or CDN
+    console.log('WASM not found in node_modules, trying without explicit path');
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const SQL = await initSqlJs({ wasmBinary } as any);
+  const SQL = await initSqlJs(wasmBinary ? { wasmBinary } as any : undefined);
 
-  // Ensure data directory exists
-  const dataDir = join(process.cwd(), 'data');
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
+  // Ensure data directory exists (on Vercel, /tmp exists but may need subdirs)
+  if (!existsSync(DATA_DIR)) {
+    try {
+      mkdirSync(DATA_DIR, { recursive: true });
+    } catch (err) {
+      console.log('Could not create data dir, using in-memory database:', err);
+    }
   }
 
   // Load existing database or create new one
   if (existsSync(DB_PATH)) {
-    const buffer = readFileSync(DB_PATH);
-    db = new SQL.Database(buffer);
+    try {
+      const buffer = readFileSync(DB_PATH);
+      db = new SQL.Database(buffer);
+    } catch {
+      db = new SQL.Database();
+      initializeSchema(db);
+    }
   } else {
     db = new SQL.Database();
     initializeSchema(db);
